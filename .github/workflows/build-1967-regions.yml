@@ -1,0 +1,103 @@
+name: Build Tanzania 1967 Regions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "requirements.txt"
+      - ".github/workflows/build-1967-regions.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-1967-regions
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 1967 repository
+        uses: actions/checkout@v4
+        with:
+          path: target
+          fetch-depth: 0
+
+      - name: Checkout source administrative shapefiles
+        uses: actions/checkout@v4
+        with:
+          repository: Heed725/Tanzania_Admin_Shapefiles
+          ref: main
+          path: source
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: target/requirements.txt
+
+      - name: Install dependencies
+        working-directory: target
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build and validate 1967 regions
+        working-directory: target
+        run: |
+          python scripts/build_1967_regions.py --source ../source --output-root .
+
+      - name: Show generated files
+        working-directory: target
+        run: |
+          find data dist docs -maxdepth 2 -type f -print | sort
+
+      - name: Commit generated GIS files
+        working-directory: target
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data dist docs
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit."
+          else
+            git commit -m "Build 1967 regional shapefiles [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Create or update release assets
+        working-directory: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="1967-regions"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "Tanzania 1967 Region Shapefiles" \
+              --notes "Automated GIS package containing the reconstructed 17 mainland Tanzania regions for 1967. Built from Heed725/Tanzania_Admin_Shapefiles."
+          fi
+          gh release upload "$TAG" \
+            dist/Tanzania_Regions_1967_Shapefile.zip \
+            data/Tanzania_Regions_1967.geojson \
+            data/Tanzania_Regions_1967.gpkg \
+            data/district_to_1967.csv \
+            docs/Tanzania_Regions_1967_preview.png \
+            --clobber
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tanzania-1967-Region-Shapefiles
+          path: |
+            target/dist/Tanzania_Regions_1967_Shapefile.zip
+            target/data/Tanzania_Regions_1967.geojson
+            target/data/Tanzania_Regions_1967.gpkg
+            target/data/district_to_1967.csv
+            target/docs/Tanzania_Regions_1967_preview.png
+          if-no-files-found: error
